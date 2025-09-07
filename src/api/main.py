@@ -17,13 +17,13 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from models.meta_learning import MetaLearningTrainer
-from models.transformers_embeddings import (
+from src.models.meta_learning import MetaLearningTrainer
+from src.models.transformers_embeddings import (
     TransformerEmbeddingModel,
     HybridTransformerRecommender,
     EmbeddingConfig,
 )
-from data.preprocessing import DataPreprocessor, DataConfig
+from src.data.preprocessing import DataPreprocessor, DataConfig
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -39,7 +39,7 @@ thread_pool: Optional[ThreadPoolExecutor] = None
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Manage application lifespan - startup and shutdown."""
-    global thread_pool
+    global thread_pool  # pylint: disable=global-statement
 
     # Startup
     logger.info("Starting Adaptive Learning Recommendation Engine...")
@@ -54,7 +54,7 @@ async def lifespan(_: FastAPI):
     except (ImportError, RuntimeError, ValueError) as e:
         logger.error("Failed to load models: %s", e)
         # Initialize with default models for demo
-        await initialize_demo_models()
+        await initialize_models()
 
     yield
 
@@ -86,35 +86,39 @@ app.add_middleware(
 # Pydantic models for API
 class UserInteraction(BaseModel):
     """Model for user interaction data."""
+
     item_id: str
     rating: Optional[float] = Field(default=1.0, ge=0.0, le=5.0)
     timestamp: Optional[datetime] = Field(default_factory=datetime.now)
-    context: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    context: Optional[Dict[str, Any]] = Field(default_factory=lambda: {})
 
 
 class RecommendationRequest(BaseModel):
     """Model for recommendation request data."""
+
     user_id: str
     user_interactions: List[UserInteraction]
     num_recommendations: int = Field(default=10, ge=1, le=100)
     recommendation_type: str = Field(
         default="hybrid", pattern="^(hybrid|content|collaborative|meta)$"
     )
-    exclude_items: Optional[List[str]] = Field(default_factory=list)
-    context: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    exclude_items: Optional[List[str]] = Field(default_factory=lambda: [])
+    context: Optional[Dict[str, Any]] = Field(default_factory=lambda: {})
 
 
 class ItemData(BaseModel):
     """Model for item data."""
+
     item_id: str
     title: str
     description: str
     category: Optional[str] = None
-    features: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    features: Optional[Dict[str, Any]] = Field(default_factory=lambda: {})
 
 
 class RecommendationResponse(BaseModel):
     """Model for recommendation response data."""
+
     request_id: str
     user_id: str
     recommendations: List[Dict[str, Any]]
@@ -125,6 +129,7 @@ class RecommendationResponse(BaseModel):
 
 class TrainingRequest(BaseModel):
     """Model for training request data."""
+
     training_data_path: str
     model_type: str = Field(default="maml", pattern="^(maml|prototypical)$")
     epochs: int = Field(default=50, ge=1, le=1000)
@@ -134,6 +139,7 @@ class TrainingRequest(BaseModel):
 
 class ModelStatus(BaseModel):
     """Model for model status information."""
+
     model_loaded: bool
     model_type: Optional[str]
     last_training: Optional[datetime]
@@ -145,12 +151,12 @@ async def load_models() -> None:
     """Load pre-trained models."""
     # This would load actual trained models in production
     # For now, we'll initialize demo models
-    await initialize_demo_models()
+    await initialize_models()
 
 
-async def initialize_demo_models() -> None:
-    """Initialize models for demonstration."""
-    global meta_learning_model, transformer_recommender, data_preprocessor
+async def initialize_models():
+    """Initialize all ML models."""
+    global meta_learning_model, transformer_recommender, data_preprocessor  # pylint: disable=global-statement
 
     # Initialize data preprocessor
     data_config = DataConfig()
@@ -270,7 +276,7 @@ async def get_recommendations(request: RecommendationRequest):
                 request.user_id,
                 interactions,
                 request.num_recommendations,
-                request.exclude_items,
+                request.exclude_items or [],
             )
 
         processing_time = (asyncio.get_event_loop().time() - start_time) * 1000
@@ -349,7 +355,7 @@ async def adapt_to_user(user_id: str, interactions: List[UserInteraction]):
         }
 
         # Perform adaptation in thread pool
-        await run_in_thread(meta_learning_model.adapt_to_new_user, user_data)
+        await run_in_thread(meta_learning_model.adapt_to_user, user_data)
 
         return {
             "message": f"Model adapted for user {user_id}",
