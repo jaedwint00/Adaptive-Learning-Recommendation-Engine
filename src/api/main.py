@@ -13,17 +13,17 @@ from typing import List, Dict, Optional, Any
 
 import torch
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from ..models.meta_learning import MetaLearningTrainer
-from ..models.transformers_embeddings import (
+from models.meta_learning import MetaLearningTrainer
+from models.transformers_embeddings import (
     TransformerEmbeddingModel,
     HybridTransformerRecommender,
     EmbeddingConfig,
 )
-from ..data.preprocessing import DataPreprocessor, DataConfig
+from data.preprocessing import DataPreprocessor, DataConfig
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,9 +37,9 @@ thread_pool: Optional[ThreadPoolExecutor] = None
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_: FastAPI):
     """Manage application lifespan - startup and shutdown."""
-    global meta_learning_model, transformer_recommender, data_preprocessor, thread_pool
+    global thread_pool
 
     # Startup
     logger.info("Starting Adaptive Learning Recommendation Engine...")
@@ -51,8 +51,8 @@ async def lifespan(app: FastAPI):
     try:
         await load_models()
         logger.info("Models loaded successfully")
-    except Exception as e:
-        logger.error(f"Failed to load models: {e}")
+    except (ImportError, RuntimeError, ValueError) as e:
+        logger.error("Failed to load models: %s", e)
         # Initialize with default models for demo
         await initialize_demo_models()
 
@@ -66,7 +66,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Adaptive Learning Recommendation Engine",
-    description="Meta-learning powered recommendation system with transformer embeddings",
+    description=(
+        "Meta-learning powered recommendation system with transformer embeddings"
+    ),
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -83,6 +85,7 @@ app.add_middleware(
 
 # Pydantic models for API
 class UserInteraction(BaseModel):
+    """Model for user interaction data."""
     item_id: str
     rating: Optional[float] = Field(default=1.0, ge=0.0, le=5.0)
     timestamp: Optional[datetime] = Field(default_factory=datetime.now)
@@ -90,6 +93,7 @@ class UserInteraction(BaseModel):
 
 
 class RecommendationRequest(BaseModel):
+    """Model for recommendation request data."""
     user_id: str
     user_interactions: List[UserInteraction]
     num_recommendations: int = Field(default=10, ge=1, le=100)
@@ -101,6 +105,7 @@ class RecommendationRequest(BaseModel):
 
 
 class ItemData(BaseModel):
+    """Model for item data."""
     item_id: str
     title: str
     description: str
@@ -109,6 +114,7 @@ class ItemData(BaseModel):
 
 
 class RecommendationResponse(BaseModel):
+    """Model for recommendation response data."""
     request_id: str
     user_id: str
     recommendations: List[Dict[str, Any]]
@@ -118,6 +124,7 @@ class RecommendationResponse(BaseModel):
 
 
 class TrainingRequest(BaseModel):
+    """Model for training request data."""
     training_data_path: str
     model_type: str = Field(default="maml", pattern="^(maml|prototypical)$")
     epochs: int = Field(default=50, ge=1, le=1000)
@@ -126,6 +133,7 @@ class TrainingRequest(BaseModel):
 
 
 class ModelStatus(BaseModel):
+    """Model for model status information."""
     model_loaded: bool
     model_type: Optional[str]
     last_training: Optional[datetime]
@@ -135,8 +143,6 @@ class ModelStatus(BaseModel):
 # Async helper functions
 async def load_models() -> None:
     """Load pre-trained models."""
-    global meta_learning_model, transformer_recommender, data_preprocessor
-
     # This would load actual trained models in production
     # For now, we'll initialize demo models
     await initialize_demo_models()
@@ -283,10 +289,10 @@ async def get_recommendations(request: RecommendationRequest):
         )
 
     except Exception as e:
-        logger.error(f"Error generating recommendations: {e}")
+        logger.error("Error generating recommendations: %s", e)
         raise HTTPException(
             status_code=500, detail=f"Failed to generate recommendations: {str(e)}"
-        )
+        ) from e
 
 
 @app.post("/recommend/batch")
@@ -343,9 +349,7 @@ async def adapt_to_user(user_id: str, interactions: List[UserInteraction]):
         }
 
         # Perform adaptation in thread pool
-        await run_in_thread(
-            meta_learning_model.adapt_to_new_user, user_data
-        )
+        await run_in_thread(meta_learning_model.adapt_to_new_user, user_data)
 
         return {
             "message": f"Model adapted for user {user_id}",
@@ -355,8 +359,10 @@ async def adapt_to_user(user_id: str, interactions: List[UserInteraction]):
         }
 
     except Exception as e:
-        logger.error(f"Error adapting model for user {user_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to adapt model: {str(e)}")
+        logger.error("Error adapting model for user %s: %s", user_id, e)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to adapt model: {str(e)}"
+        ) from e
 
 
 @app.post("/train")
@@ -411,13 +417,17 @@ async def update_items(items: List[ItemData]):
         }
 
     except Exception as e:
-        logger.error(f"Error updating items: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to update items: {str(e)}")
+        logger.error("Error updating items: %s", e)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update items: {str(e)}"
+        ) from e
 
 
 # Helper functions for different recommendation types
 async def generate_meta_recommendations(
-    user_id: str, interactions: List[Dict[str, Any]], k: int
+    user_id: str,  # pylint: disable=unused-argument
+    interactions: List[Dict[str, Any]],  # pylint: disable=unused-argument
+    k: int,
 ) -> List[Dict[str, Any]]:
     """Generate recommendations using meta-learning."""
 
@@ -438,7 +448,10 @@ async def generate_meta_recommendations(
 
 
 async def generate_content_recommendations(
-    user_id: str, interactions: List[Dict[str, Any]], k: int, exclude_items: List[str]
+    user_id: str,  # pylint: disable=unused-argument
+    interactions: List[Dict[str, Any]],  # pylint: disable=unused-argument
+    k: int,
+    exclude_items: List[str],
 ) -> List[Dict[str, Any]]:
     """Generate content-based recommendations."""
 
@@ -460,7 +473,9 @@ async def generate_content_recommendations(
 
 
 async def generate_collaborative_recommendations(
-    user_id: str, interactions: List[Dict[str, Any]], k: int
+    user_id: str,  # pylint: disable=unused-argument
+    interactions: List[Dict[str, Any]],  # pylint: disable=unused-argument
+    k: int,
 ) -> List[Dict[str, Any]]:
     """Generate collaborative filtering recommendations."""
 
@@ -504,37 +519,37 @@ async def generate_hybrid_recommendations(
             transformer_recommender.recommend, user_id, interactions, k
         )
         return recommendations
-    except Exception as e:
-        logger.error(f"Error in hybrid recommendations: {e}")
+    except (RuntimeError, ValueError, AttributeError) as e:
+        logger.error("Error in hybrid recommendations: %s", e)
         return []
 
 
 async def run_training_task(
     training_id: str,
-    data_path: str,
-    model_type: str,
-    epochs: int,
-    batch_size: int,
-    learning_rate: float,
+    data_path: str,  # pylint: disable=unused-argument
+    model_type: str,  # pylint: disable=unused-argument
+    epochs: int,  # pylint: disable=unused-argument
+    batch_size: int,  # pylint: disable=unused-argument
+    learning_rate: float,  # pylint: disable=unused-argument
 ) -> None:
     """Background task for model training."""
 
-    logger.info(f"Starting training task {training_id}")
+    logger.info("Starting training task %s", training_id)
 
     try:
         # This would implement actual training logic
         # For demo, simulate training time
         await asyncio.sleep(10)  # Simulate training
 
-        logger.info(f"Training task {training_id} completed successfully")
+        logger.info("Training task %s completed successfully", training_id)
 
-    except Exception as e:
-        logger.error(f"Training task {training_id} failed: {e}")
+    except (RuntimeError, ValueError, IOError) as exc:
+        logger.error("Training task %s failed: %s", training_id, exc)
 
 
 # WebSocket endpoint for real-time recommendations
 @app.websocket("/ws/recommendations/{user_id}")
-async def websocket_recommendations(websocket: Any, user_id: str) -> None:
+async def websocket_recommendations(websocket: WebSocket, user_id: str) -> None:
     """WebSocket endpoint for real-time recommendation updates."""
 
     await websocket.accept()
@@ -562,8 +577,8 @@ async def websocket_recommendations(websocket: Any, user_id: str) -> None:
                 }
             )
 
-    except Exception as e:
-        logger.error(f"WebSocket error for user {user_id}: {e}")
+    except (RuntimeError, ValueError, ConnectionError) as e:
+        logger.error("WebSocket error for user %s: %s", user_id, e)
         await websocket.close()
 
 

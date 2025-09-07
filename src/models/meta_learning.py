@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 import torch.nn.functional as F
 from torch import optim
 from torch.utils.data import DataLoader, Dataset
@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 class MetaLearningDataset(Dataset):
     """Dataset for meta-learning tasks."""
 
-    def __init__(self, tasks: List[Dict]):
+    def __init__(self, tasks: List[Dict], n_items: int = 1000, support_size: int = 5):
         self.tasks = tasks
+        self.n_items = n_items
+        self.support_size = support_size
 
     def __len__(self):
         return len(self.tasks)
@@ -32,9 +34,7 @@ class MetaLearningDataset(Dataset):
 
         # Convert to tensors
         support_users = torch.tensor(task["support"]["users"], dtype=torch.long)
-        support_items = torch.randint(
-            0, self.n_items, (self.support_size,)
-        )
+        support_items = torch.randint(0, self.n_items, (self.support_size,))
         support_ratings = torch.tensor(task["support"]["ratings"], dtype=torch.float32)
 
         query_users = torch.tensor(task["query"]["users"], dtype=torch.long)
@@ -64,7 +64,7 @@ class BaseRecommendationModel(nn.Module, ABC):
         n_users: int,
         n_items: int,
         embedding_dim: int = 64,
-        hidden_dims: Optional[List[int]] = None,
+        hidden_dims: Optional[List[int]] = None,  # pylint: disable=unused-argument
     ):
         super().__init__()
         self.n_users = n_users
@@ -80,7 +80,15 @@ class BaseRecommendationModel(nn.Module, ABC):
 
     @abstractmethod
     def forward(self, users: torch.Tensor, items: torch.Tensor) -> torch.Tensor:
-        pass
+        """Forward pass for the recommendation model.
+        
+        Args:
+            users: User tensor indices
+            items: Item tensor indices
+            
+        Returns:
+            Predicted ratings tensor
+        """
 
 
 class MatrixFactorizationModel(BaseRecommendationModel):
@@ -91,9 +99,13 @@ class MatrixFactorizationModel(BaseRecommendationModel):
         n_users: int,
         n_items: int,
         embedding_dim: int = 64,
-        hidden_dims: List[int] = [128, 64],
+        hidden_dims: Optional[List[int]] = None,
     ):
         super().__init__(n_users, n_items, embedding_dim)
+
+        # Set default hidden dimensions if None provided
+        if hidden_dims is None:
+            hidden_dims = [128, 64]
 
         # MLP layers for interaction modeling
         layers = []
@@ -408,7 +420,10 @@ class MetaLearningTrainer:
 
                 logger.info(
                     "Epoch %d/%d - Train Loss: %.4f, Val Loss: %.4f",
-                    epoch + 1, epochs, train_loss, val_loss
+                    epoch + 1,
+                    epochs,
+                    train_loss,
+                    val_loss,
                 )
             else:
                 logger.info(
@@ -418,9 +433,9 @@ class MetaLearningTrainer:
     def _train_prototypical_epoch(self, dataloader: DataLoader) -> float:
         """Train prototypical network for one epoch."""
 
-        if self.trainer is not None and hasattr(self.trainer, 'train'):
+        if self.trainer is not None and hasattr(self.trainer, "train"):
             self.trainer.train()
-        if self.trainer is not None and hasattr(self.trainer, 'parameters'):
+        if self.trainer is not None and hasattr(self.trainer, "parameters"):
             optimizer = optim.Adam(self.trainer.parameters(), lr=0.001)
         else:
             raise ValueError("Trainer not initialized")

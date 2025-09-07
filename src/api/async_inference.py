@@ -4,6 +4,14 @@ Handles concurrent requests and batch processing efficiently.
 """
 
 import asyncio
+import hashlib
+import json
+import logging
+import threading
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Callable, Tuple
 from typing import TYPE_CHECKING
 
@@ -15,12 +23,6 @@ else:
     except ImportError:
         Parallel = None
         delayed = None
-import logging
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from dataclasses import dataclass
-import time
-from collections import defaultdict
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -206,14 +208,14 @@ class AsyncInferenceEngine:
                     else "cpu"
                 ),
             }
-        logger.info(f"Registered model: {name}")
+        logger.info("Registered model: %s", name)
 
     def unregister_model(self, name: str) -> None:
         """Unregister a model."""
         with self.model_lock:
             if name in self.models:
                 del self.models[name]
-                logger.info(f"Unregistered model: {name}")
+                logger.info("Unregistered model: %s", name)
 
     async def infer(
         self,
@@ -333,8 +335,8 @@ class AsyncInferenceEngine:
         try:
             await self.request_queue.put(queue_item)
             return await future
-        except asyncio.QueueFull:
-            raise RuntimeError("Request queue is full")
+        except Exception as exc:
+            raise RuntimeError("Request queue is full") from exc
 
     async def _direct_inference(self, request: Dict[str, Any]) -> Any:
         """Process inference directly."""
@@ -404,8 +406,8 @@ class AsyncInferenceEngine:
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                logger.error(f"Error in batch processor: {e}")
+            except (RuntimeError, ValueError, AttributeError) as e:
+                logger.error("Error in batch processor: %s", e)
 
     async def _process_batch(
         self,
@@ -442,17 +444,17 @@ class AsyncInferenceEngine:
 
             self._update_metrics("batch_processed", 0)
 
-        except Exception as e:
+        except (RuntimeError, ValueError, AttributeError) as e:
             # Set exception for all futures
             for future in futures:
                 if not future.cancelled():
                     future.set_exception(e)
-            logger.error(f"Error processing batch: {e}")
+            logger.error("Error processing batch: %s", e)
 
     async def _queue_processor(self, processor_id: str) -> None:
         """Background task for processing request queue."""
 
-        logger.info(f"Started queue processor: {processor_id}")
+        logger.info("Started queue processor: %s", processor_id)
 
         while True:
             try:
@@ -467,23 +469,20 @@ class AsyncInferenceEngine:
                     # Process request
                     result = await self._direct_inference(request)
                     future.set_result(result)
-                except Exception as e:
+                except (RuntimeError, ValueError, AttributeError) as e:
                     future.set_exception(e)
                 finally:
                     self.request_queue.task_done()
 
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                logger.error(f"Error in queue processor {processor_id}: {e}")
+            except (RuntimeError, ValueError, AttributeError) as e:
+                logger.error("Error in queue processor %s: %s", processor_id, e)
 
     def _generate_cache_key(self, model_name: str, request_data: Dict[str, Any]) -> str:
         """Generate cache key for request."""
 
         # Simple hash-based key generation
-        import hashlib
-        import json
-
         key_data = {"model": model_name, "data": request_data}
 
         key_str = json.dumps(key_data, sort_keys=True)
@@ -643,7 +642,9 @@ async def main() -> None:
     try:
         # Mock models for demonstration
         class MockModel:
+            """Mock model for demonstration purposes."""
             def predict(self, data: Any) -> Dict[str, str]:
+                """Predict method for mock model."""
                 # Simulate inference time
                 time.sleep(0.01)
                 return {"prediction": f'result_for_{data.get("input", "unknown")}'}

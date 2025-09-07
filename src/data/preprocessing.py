@@ -56,7 +56,9 @@ class DataPreprocessor:
         logger.info("Data loaded from %s", data_path)
         return df
 
-    def create_interaction_matrix(self, data: pd.DataFrame) -> Tuple[np.ndarray, Dict]:
+    def create_interaction_matrix(
+        self, data: pd.DataFrame  # pylint: disable=unused-argument
+    ) -> Tuple[np.ndarray, Dict]:
         """Create user-item interaction matrix with DuckDB for efficiency."""
 
         # Use DuckDB for fast aggregations

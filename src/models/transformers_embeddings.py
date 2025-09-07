@@ -192,13 +192,13 @@ class ContentBasedRecommender:
         embeddings_np = self.item_embeddings.cpu().numpy().astype("float32")
 
         # Normalize embeddings for cosine similarity
-        faiss.normalize_L2(embeddings_np)
+        faiss.normalize_L2(embeddings_np)  # pylint: disable=no-value-for-parameter
 
         # Create FAISS index
         dimension = embeddings_np.shape[1]
         # Inner product for cosine similarity
         self.faiss_index = faiss.IndexFlatIP(dimension)
-        self.faiss_index.add(embeddings_np)
+        self.faiss_index.add(embeddings_np)  # pylint: disable=no-value-for-parameter
 
         logger.info("FAISS index built with %d items", self.faiss_index.ntotal)
 
@@ -280,6 +280,7 @@ class ContentBasedRecommender:
         )
 
         # Search for similar items
+        # pylint: disable=no-value-for-parameter
         similarities, indices = self.faiss_index.search(
             user_profile_np, k * 2
         )  # Get more than needed for filtering
@@ -331,7 +332,7 @@ class ContentBasedRecommender:
         item_embedding = self.item_embeddings[item_idx]
 
         # Compute similarity with user profile
-        overall_similarity = F.cosine_similarity(
+        overall_similarity = torch.cosine_similarity(
             user_profile.unsqueeze(0), item_embedding.unsqueeze(0)
         ).item()
 
@@ -349,7 +350,7 @@ class ContentBasedRecommender:
 
                 if hist_item_idx is not None:
                     hist_embedding = self.item_embeddings[hist_item_idx]
-                    similarity = F.cosine_similarity(
+                    similarity = torch.cosine_similarity(
                         item_embedding.unsqueeze(0), hist_embedding.unsqueeze(0)
                     ).item()
                     similar_items.append(
@@ -449,10 +450,7 @@ class HybridTransformerRecommender:
     ) -> List[Tuple[int, float]]:
         """Get collaborative filtering recommendations."""
 
-        if (
-            self.user_similarities is None
-            or self.user_item_matrix is None
-        ):
+        if self.user_similarities is None or self.user_item_matrix is None:
             return []
 
         # Find similar users
